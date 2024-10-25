@@ -1,21 +1,34 @@
 import sys
+
+# Importing weights and biases module
 import wandb
 
+# Importing torch, the neural network module (nn) and the stateless functional module (functional)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Importing torch dataloader
 from torch.utils.data import DataLoader
 
+# Importing pytorch lightning for enabling checkpointing and logs
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+
+# Importing metrics that will be computed afterwards
 from torchmetrics import MeanSquaredError, R2Score, SpearmanCorrCoef, PearsonCorrCoef
+
+# Importing OmegaConf to handle configurations from multiple sources
 from omegaconf import OmegaConf
 
+# Importing the transfer model module, as ThermoMPNN does transfer learning
 from transfer_model import TransferModel
+
+# Importing the datasets of FireProt, Megascale and Combo, indicated in datasets.py
 from datasets import FireProtDataset, MegaScaleDataset, ComboDataset
 
-
+# Defining the metrics to be measured
 def get_metrics():
     return {
         "r2": R2Score(),
@@ -24,23 +37,33 @@ def get_metrics():
         "spearman": SpearmanCorrCoef(),
     }
 
-
+# Defining the transfer model hyperparameters, which are passed in cfg via the config.yaml file
 class TransferModelPL(pl.LightningModule):
     """Class managing training loop with pytorch lightning"""
+# Taking the cfg configuration
     def __init__(self, cfg):
+# Calling the parent class pl.LightningModule
         super().__init__()
+# Passing the cfg configuration
         self.model = TransferModel(cfg)
-
+# There are two separate learning rates, one for the model and another for MPNN,
+# the latter can be set in the config.yaml file
+# There is also a learning rate scheduler setup that can be set to true in the config.yaml file
         self.learn_rate = cfg.training.learn_rate
         self.mpnn_learn_rate = cfg.training.mpnn_learn_rate if 'mpnn_learn_rate' in cfg.training else None
         self.lr_schedule = cfg.training.lr_schedule if 'lr_schedule' in cfg.training else False
 
-        # set up metrics dictionary
+# Setting up an empty dictionary to hold torch modules
         self.metrics = nn.ModuleDict()
+# Looping over training and validation splits
         for split in ("train_metrics", "val_metrics"):
+# Storing the metrics of each split in the dictionary
             self.metrics[split] = nn.ModuleDict()
+# Setting the output
             out = "ddG"
+# Storing the output for each split in the dictionary
             self.metrics[split][out] = nn.ModuleDict()
+# Obtaining the error metrics for each split
             for name, metric in get_metrics().items():
                 self.metrics[split][out][name] = metric
 
