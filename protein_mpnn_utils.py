@@ -14,7 +14,6 @@ import random
 import itertools
 import re
 
-
 # A number of functions/classes are adopted from: https://github.com/jingraham/neurips19-graph-protein-design
 
 def _scores(S, log_probs, mask):
@@ -117,7 +116,8 @@ def parse_PDB_biounits(x, atoms=['N', 'CA', 'C'], chain=None):
                         else:
                             xyz_.append(np.full(3, np.nan))
             else:
-                for atom in atoms: xyz_.append(np.full(3, np.nan))
+                for atom in atoms:
+                    xyz_.append(np.full(3, np.nan))
         return np.array(xyz_).reshape(-1, len(atoms), 3), N_to_AA(np.array(seq_))
     except TypeError:
         return 'no_chain', 'no_chain'
@@ -150,6 +150,7 @@ def parse_PDB(path_to_pdb, input_chain_list=None, ca_only=False, side_chains=Fal
             if ca_only:
                 sidechain_atoms = ['CA']
             elif side_chains:
+# Incorporated side chain atoms into ThermoMPNN
                 sidechain_atoms = ["N", "CA", "C", "O", "CB",
                                    "CG", "CG1", "OG1", "OG2", "CG2", "OG", "SG",
                                    "CD", "SD", "CD1", "ND1", "CD2", "OD1", "OD2", "ND2",
@@ -180,6 +181,7 @@ def parse_PDB(path_to_pdb, input_chain_list=None, ca_only=False, side_chains=Fal
             c += 1
     return pdb_dict_list
 
+# Another PDB parser added into ThermoMPNN
 def alt_parse_PDB_biounits(x, atoms=['N', 'CA', 'C'], chain=None):
     '''
   input:  x = PDB filename
