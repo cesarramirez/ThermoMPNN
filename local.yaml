@@ -1,7 +1,7 @@
 platform:
   accel: "gpu"
   cache_dir: "/home/iwe41/Documents/dataload/"
-  thermompnn_dir: "/home/iwe41/github/ThermoMPNN_try"
+  thermompnn_dir: "/home/iwe41/github/ThermoMPNN"
 
 data_loc:
         megascale_csv: "/nas/longleaf/home/dieckhau/protein-stability/enzyme-stability/data/mega_scale/Processed_K50_dG_datasets/Tsuboyama2023_Dataset2_Dataset3_20230416.csv"
