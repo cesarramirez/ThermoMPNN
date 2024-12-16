@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: ThermoMPNN",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train_thermompnn.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PATH": "/opt/conda/conda/envs/thermoMPNN/bin:${env:PATH}",
+                "PYTHONPATH": "",
+                "LD_LIBRARY_PATH": "",
+                "PYTHONNOUSERSITE": "1"
+            },
+            "python": "/opt/conda/conda/envs/thermoMPNN/bin/python",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

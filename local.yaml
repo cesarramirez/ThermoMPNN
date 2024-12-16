@@ -11,3 +11,7 @@ data_loc:
         fireprot_csv: "/home/iwe41/Documents/dataload/fireprot/csvs/4_fireprotDB_bestpH.csv"
         fireprot_splits: "/home/iwe41/Documents/dataload/fireprot/csvs/fireprot_splits.pkl"
         fireprot_pdbs: "/home/iwe41/Documents/dataload/fireprot/pdbs/"
+
+        S4038_csv: "/home/iwe41/Documents/dataload/S4038/csvs/S4038_final.csv"
+        S4038_splits: "/home/iwe41/Documents/dataload/S4038/csvs/S4038_splits.pkl"
+        S4038_pdbs: "/home/iwe41/Documents/dataload/S4038/pdbs"

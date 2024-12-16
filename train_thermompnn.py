@@ -26,7 +26,7 @@ from omegaconf import OmegaConf
 from transfer_model import TransferModel
 
 # Importing the datasets of FireProt, Megascale and Combo, indicated in datasets.py
-from datasets import FireProtDataset, MegaScaleDataset, ComboDataset
+from datasets import FireProtDataset, MegaScaleDataset, S4038Dataset, ComboDataset
 
 # Defining the metrics to be measured
 def get_metrics():
@@ -183,6 +183,9 @@ def train(cfg):
         if dataset == 'fireprot':
             train_dataset = FireProtDataset(cfg, "train")
             val_dataset = FireProtDataset(cfg, "val")
+        elif dataset == 'S4038':
+            train_dataset = S4038Dataset(cfg, "train")
+            val_dataset = S4038Dataset(cfg, "val")
         elif dataset == 'megascale_s669':
             train_dataset = MegaScaleDataset(cfg, "train_s669")
             val_dataset = MegaScaleDataset(cfg, "val")
@@ -222,8 +225,16 @@ def train(cfg):
 # Training for the number of epochs indicated in the yaml file, otherwise 100 epochs
     max_ep = cfg.training.epochs if 'epochs' in cfg.training else 100
 #Training on either CPU or GPU based on the local.yaml file
-    trainer = pl.Trainer(callbacks=[checkpoint_callback], logger=logger, log_every_n_steps=10, max_epochs=max_ep,
-                         accelerator=cfg.platform.accel, devices=1)
+    trainer = pl.Trainer(
+        callbacks=[checkpoint_callback],
+        logger=logger,
+        log_every_n_steps=10,
+        max_epochs=max_ep,
+        accelerator=cfg.platform.accel,
+        devices=1,
+        strategy='auto',
+        use_distributed_sampler=False,
+        plugins=[])
     trainer.fit(model_pl, train_loader, val_loader)
 
 # If we want to train in two stages, we can do different sets of training and validation

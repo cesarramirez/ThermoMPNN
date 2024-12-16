@@ -9,6 +9,10 @@ from math import isnan
 from tqdm import tqdm
 from dataclasses import dataclass
 from typing import Optional
+import logging
+import sys
+import multiprocessing as mp
+from functools import partial
 
 from protein_mpnn_utils import alt_parse_PDB, parse_PDB
 from cache import cache
@@ -244,6 +248,216 @@ class FireProtDataset(torch.utils.data.Dataset):
 
         return pdb, mutations
 
+# Set up logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('s4038_dataset_debug.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+class S4038Dataset(torch.utils.data.Dataset):
+    def validate_pdb(self, wt_name, cfg):
+        """Process a single PDB file and validate its sequence"""
+        try:
+            pdb_file = os.path.join(cfg.data_loc.S4038_pdbs, f"{wt_name}.pdb")
+            if not os.path.exists(pdb_file):
+                logging.warning(f"Missing PDB file: {pdb_file}")
+                return None
+            
+            pdb = parse_pdb_cached(cfg, pdb_file)
+            csv_data = self.mut_rows[wt_name]
+            csv_seq = csv_data.pdb_sequence.iloc[0]
+            
+            # Clean up sequences
+            pdb_seq = pdb[0]['seq'].replace('-', '')
+            csv_seq = csv_seq.replace('-', '')
+            
+            # Handle repeated sequences in PDB (NMR structures)
+            if len(pdb_seq) > len(csv_seq):
+                n_copies = len(pdb_seq) // len(csv_seq)
+                if n_copies > 1 and all(pdb_seq[i:i+len(csv_seq)] == csv_seq 
+                                      for i in range(0, len(pdb_seq), len(csv_seq))):
+                    logging.info(f"Found {n_copies} copies of sequence in PDB {wt_name}")
+                    # Take just the first copy
+                    pdb[0]['seq'] = pdb_seq[:len(csv_seq)]
+                    return wt_name, pdb
+            
+            # Handle sequence mismatches
+            if pdb_seq != csv_seq:
+                logging.warning(f"Sequence mismatch for {wt_name}")
+                logging.warning(f"PDB: {pdb_seq}")
+                logging.warning(f"CSV: {csv_seq}")
+                
+                # Try to find the CSV sequence within the PDB sequence
+                if csv_seq in pdb_seq:
+                    start_idx = pdb_seq.index(csv_seq)
+                    logging.info(f"Found CSV sequence in PDB at position {start_idx}")
+                    pdb[0]['seq'] = pdb_seq[start_idx:start_idx + len(csv_seq)]
+                    
+                    # Adjust position offsets
+                    csv_data = csv_data.copy()
+                    csv_data['pdb_position'] = csv_data['pdb_position'].apply(lambda x: x - start_idx)
+                    self.mut_rows[wt_name] = csv_data
+                    
+                    return wt_name, pdb
+                else:
+                    # Try sequence alignment
+                    from Bio import pairwise2
+                    alignments = pairwise2.align.globalxx(pdb_seq, csv_seq)
+                    best_alignment = alignments[0]
+                    
+                    if best_alignment.score / len(csv_seq) > 0.9:  # 90% similarity threshold
+                        logging.info(f"Found good alignment for {wt_name} with score {best_alignment.score}")
+                        
+                        # Create position mapping
+                        pdb_to_csv = {}
+                        csv_pos = 0
+                        pdb_pos = 0
+                        
+                        for i, (p, c) in enumerate(zip(best_alignment.seqA, best_alignment.seqB)):
+                            if p != '-' and c != '-':
+                                pdb_to_csv[pdb_pos] = csv_pos
+                            if p != '-':
+                                pdb_pos += 1
+                            if c != '-':
+                                csv_pos += 1
+                        
+                        # Update position mappings in CSV data
+                        csv_data = csv_data.copy()
+                        csv_data['pdb_position'] = csv_data['pdb_position'].apply(
+                            lambda x: pdb_to_csv.get(x, x)
+                        )
+                        self.mut_rows[wt_name] = csv_data
+                        
+                        return wt_name, pdb
+                    
+                    logging.error(f"Could not reconcile sequences for {wt_name}")
+                    return None
+            
+            return wt_name, pdb
+            
+        except Exception as e:
+            logging.error(f"Error processing {wt_name}: {str(e)}")
+            return None
+
+    def __init__(self, cfg, split):
+        self.cfg = cfg
+        self.split = split
+
+        filename = self.cfg.data_loc.S4038_csv
+
+        df = pd.read_csv(filename).dropna(subset=['ddG'])
+        df = df.where(pd.notnull(df), None)
+
+        self.seq_to_data = {}
+        seq_key = "pdb_sequence"
+
+        for wt_seq in df[seq_key].unique():
+            self.seq_to_data[wt_seq] = df.query(f"{seq_key} == @wt_seq").reset_index(drop=True)
+
+        self.df = df
+
+        # load splits produced by mmseqs clustering
+        with open(self.cfg.data_loc.S4038_splits, 'rb') as f:
+            splits = pickle.load(f)  # this is a dict with keys train/val/test and items holding FULL PDB names for a given split
+            
+        self.split_wt_names = {
+            "val": [],
+            "test": [],
+            "train": [],
+            "all": []
+        }
+
+        self.wt_seqs = {}
+        self.mut_rows = {}
+
+        if self.split == 'all':
+            all_names = list(splits.values())
+            all_names = [j for sub in all_names for j in sub]
+            self.split_wt_names[self.split] = all_names
+        else:
+            self.split_wt_names[self.split] = splits[self.split]
+
+        self.wt_names = self.split_wt_names[self.split]
+
+        # Add logging for initialization
+        logging.info(f"Initializing S4038Dataset with split: {split}")
+        logging.info(f"Number of proteins in split: {len(self.wt_names)}")
+
+        for wt_name in self.wt_names:
+            self.mut_rows[wt_name] = df.query('pdb_id == @wt_name').reset_index(drop=True)
+            self.wt_seqs[wt_name] = self.mut_rows[wt_name].pdb_sequence[0]
+
+        # Parallel processing of PDB files
+        self.pdb_cache = {}
+        
+        # Create a pool with 75% of available cores (leave some for other processes)
+        n_cores = max(1, int(mp.cpu_count() * 0.75))
+        logging.info(f"Using {n_cores} cores for parallel processing")
+        
+        with mp.Pool(n_cores) as pool:
+            # Process PDBs in parallel
+            validate_func = partial(self.validate_pdb, cfg=cfg)
+            results = pool.map(validate_func, self.wt_names)
+            
+            # Store valid results in cache
+            for result in results:
+                if result is not None:
+                    wt_name, pdb = result
+                    self.pdb_cache[wt_name] = pdb
+        
+        logging.info(f"Successfully processed {len(self.pdb_cache)} out of {len(self.wt_names)} proteins")
+
+    def __len__(self):
+        return len(self.wt_names)
+
+    def __getitem__(self, index):
+        wt_name = self.wt_names[index]
+        logging.debug(f"\nProcessing protein: {wt_name}")
+        
+        seq = self.wt_seqs[wt_name]
+        data = self.seq_to_data[seq]
+        
+        # Use cached PDB if available
+        if wt_name in self.pdb_cache:
+            pdb = self.pdb_cache[wt_name]
+        else:
+            pdb_file = os.path.join(self.cfg.data_loc.S4038_pdbs, f"{data.pdb_id[0]}.pdb")
+            logging.debug(f"Loading PDB file: {pdb_file}")
+            pdb = parse_pdb_cached(self.cfg, pdb_file)
+        
+        mutations = []
+        for i, row in data.iterrows():
+            try:
+                pdb_idx = row.pdb_position
+                logging.debug(f"\nProcessing mutation at position {pdb_idx}")
+                logging.debug(f"PDB sequence at position: {pdb[0]['seq'][pdb_idx]}")
+                logging.debug(f"Wild type from CSV: {row.wild_type}")
+                logging.debug(f"Position in CSV: {row.position}")
+                logging.debug(f"PDB position offset: {row.pdb_position}")
+                logging.debug(f"Full PDB sequence length: {len(pdb[0]['seq'])}")
+                logging.debug(f"Full CSV sequence length: {len(row.pdb_sequence)}")
+                
+                # Verify sequence match
+                if pdb[0]['seq'][pdb_idx] != row.wild_type:
+                    logging.error(f"Mismatch between PDB sequence ({pdb[0]['seq'][pdb_idx]}) and wild type ({row.wild_type})")
+                    continue  # Skip this mutation instead of failing
+                
+                ddG = None if row.ddG is None or isnan(row.ddG) else torch.tensor([row.ddG], dtype=torch.float32)
+                mut = Mutation(pdb_idx, pdb[0]['seq'][pdb_idx], row.mutation, ddG, wt_name)
+                mutations.append(mut)
+
+            except Exception as e:
+                logging.error(f"Error processing mutation in {wt_name}: {str(e)}")
+                continue  # Skip problematic mutations
+
+        if not mutations:
+            logging.warning(f"No valid mutations found for {wt_name}")
+            
+        return pdb, mutations
 
 class ddgBenchDataset(torch.utils.data.Dataset):
 
